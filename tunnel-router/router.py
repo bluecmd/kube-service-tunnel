@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import collections
 import iptc
 import pykube
 import random
@@ -10,6 +11,15 @@ INGRESS_CHAIN = 'TUNNEL-INGRESS'
 FILTER_CHAIN = 'TUNNEL-FILTER'
 TUNNEL_ANNOTATION = 'cmd.nu/tunnel'
 BUCKETS = 2
+
+
+Service = collections.namedtuple('Service', ('name', 'namespace'))
+AddService = collections.namedtuple(
+        'AddService', ('service', 'tunnel_ip'))
+RemoveService = collections.namedtuple(
+        'RemoveService', ('service', 'tunnel_ip'))
+RefreshEndpoints = collections.namedtuple(
+        'RefreshEndpoints', ('service', 'endpoints'))
 
 
 def create_ingress_chain():
@@ -56,74 +66,59 @@ def register_ingress():
 
 
 def get_services(api):
-    # Stored as (service, namespace, tunnel-ip) = iptc.Rule
+    """Return set of (service, tunnel-ip)."""
     filters = set()
     for svc in pykube.Service.objects(api).filter(namespace=pykube.all):
         annotations = svc.metadata.get('annotations', {})
         tunnel_ip = annotations.get(TUNNEL_ANNOTATION, None)
         if tunnel_ip is None:
             continue
-        filters.add((svc.name, svc.metadata['namespace'], tunnel_ip))
+        filters.add((Service(svc.name, svc.metadata['namespace']), tunnel_ip))
     return filters
 
 
 def get_endpoints(api, services):
-    # Stored as (service, namespace) = set(pods)
+    """Return map of (service) = set(ips)."""
     endpoints = {}
     for endp in pykube.Endpoint.objects(api).filter(namespace=pykube.all):
-        svc = endp.metadata['name']
-        namespace = endp.metadata['namespace']
-        if not (svc, namespace) in services:
+        svc = Service(endp.metadata['name'], endp.metadata['namespace'])
+        if not svc in services:
             continue
         ips = set()
         subsets = endp.obj['subsets']
         for s in subsets:
             for address in s['addresses']:
                 ips.add(address['ip'])
-        endpoints[(svc, namespace)] = ips
+        endpoints[svc] = ips
     return endpoints
 
 
 def calculate_filter_changes(api, service_map):
     # Calculate filter changes
-    changes = []
-
     new_services = get_services(api)
     current_services = set(service_map.keys())
     removed_services = current_services - new_services
     added_services = new_services - current_services
-    for entry in removed_services:
-        changes.append(('Removed service', entry))
-        del service_map[entry]
-    for entry in added_services:
-        changes.append(('Added service', entry))
-        service_map[entry] = 1
-    return changes
+    for svc, tunnel_ip in added_services:
+        yield AddService(svc, tunnel_ip)
+    for svc, tunnel_ip in removed_services:
+        yield RemoveService(svc, tunnel_ip)
 
 
 def calculate_routing_changes(api, endpoint_map, service_filter):
     # Calculate routing balancing changes
-    changes = []
     new_endpoints_map = get_endpoints(api, service_filter)
 
     # Endppint changes in already known, or new, services
-    for key, new_endpoints in new_endpoints_map.iteritems():
-        current_endpoints = endpoint_map.get(key, set())
-        added_endpoints = new_endpoints - current_endpoints
-        removed_endpoints = current_endpoints - new_endpoints
-        for endpoint in added_endpoints:
-            changes.append(('Added routing endpoint', endpoint))
-        for endpoint in removed_endpoints:
-            changes.append(('Removed routing endpoint', endpoint))
-        endpoint_map[key] = new_endpoints
+    for svc, new_endpoints in new_endpoints_map.iteritems():
+        current_endpoints = endpoint_map.get(svc, set())
+        if current_endpoints != new_endpoints:
+            yield RefreshEndpoints(svc, new_endpoints)
 
-    # Removed services
-    to_remove = set(endpoint_map.keys()) - set(new_endpoints_map.keys())
-    for key in to_remove:
-        for endpoint in endpoint_map[key]:
-            changes.append(('Removed routing endpoint', endpoint))
-        del endpoint_map[key]
-    return changes
+    # Purge empty endpoint services
+    removed_services = set(endpoint_map.keys()) - set(new_endpoints_map.keys())
+    for svc in removed_services:
+        yield RefreshEndpoints(svc, set())
 
 
 if __name__ == '__main__':
@@ -142,22 +137,35 @@ if __name__ == '__main__':
     api = pykube.HTTPClient(kube_creds)
 
     # Map 1: Used to filter on IPs to ingress in the tunnels
-    # Stored as (service, namespace, tunnel-ip) = iptc.Rule
+    # Stored as (service, tunnel-ip) = iptc.Rule
     service_map = {}
 
     # Map 2: Used to balance among endpoints (pods)
-    # Stored as (service, namespace) = set(pods)
+    # Stored as (service) = set(pods)
     # On changes on the above, recalculate the route maps
     endpoint_map = {}
 
     while True:
         filter_changes = calculate_filter_changes(api, service_map)
-        service_filter = {
-                (svc, ns) for svc, ns, _ in service_map}
+        for change in filter_changes:
+            key = (change.service, change.tunnel_ip)
+            if type(change) == AddService:
+                service_map[key] = 1
+                print 'ADD', change.service, change.tunnel_ip
+            elif type(change) == RemoveService:
+                del service_map[key]
+                print 'REMOVE', change.service, change.tunnel_ip
+
+        service_filter = {svc for svc, _ in service_map}
         routing_changes = calculate_routing_changes(
                 api, endpoint_map, service_filter)
 
-        print filter_changes
-        print routing_changes
+        for change in routing_changes:
+            if type(change) == RefreshEndpoints:
+                print 'REFRESH', change.service, change.endpoints
+                if not change.endpoints:
+                    del endpoint_map[change.service]
+                    continue
+                endpoint_map[change.service] = change.endpoints
 
         time.sleep(1)
