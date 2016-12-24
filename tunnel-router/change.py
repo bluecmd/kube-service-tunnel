@@ -1,41 +1,43 @@
+import binascii
 import iptc
+import socket
+
+
+# Prefix tunnel interfaces with this string
+TUNNEL_PREFIX = 'ts'
 
 
 class AddService(object):
     """Start ingressing a tunnel IP for a service."""
 
-    def __init__(self, service, tunnel_ip):
+    def __init__(self, service):
         self.service = service
-        self.tunnel_ip = tunnel_ip
 
     def enact(self, service_map, filter_chain, ingress_chain):
-        print 'ADD', self.service, self.tunnel_ip
+        print 'ADD', self.service
 
         rule = iptc.Rule()
-        rule.dst = self.tunnel_ip
+        rule.dst = self.service.tunnel_ip
         t = rule.create_target(ingress_chain.name)
         m = rule.create_match("comment")
         m.comment = "Tunnel ingress for (%s, %s)" % (
                 self.service.name, self.service.namespace)
         filter_chain.insert_rule(rule)
 
-        key = (self.service, self.tunnel_ip)
-        service_map[key] = rule
+        service_map[self.service] = rule
 
 
 class RemoveService(object):
     """Stop ingressing a tunnel IP for a service."""
 
-    def __init__(self, service, tunnel_ip):
+    def __init__(self, service):
         self.service = service
-        self.tunnel_ip = tunnel_ip
 
     def enact(self, service_map, filter_chain, ingress_chain):
-        print 'REMOVE', self.service, self.tunnel_ip
-        key = (self.service, self.tunnel_ip)
-        rule = service_map[key]
+        print 'REMOVE', self.service
+        rule = service_map[self.service]
         filter_chain.delete_rule(rule)
-        del service_map[key]
+        del service_map[self.service]
 
 
 class RefreshEndpoints(object):
@@ -45,7 +47,7 @@ class RefreshEndpoints(object):
         self.service = service
         self.endpoints = endpoints
 
-    def enact(self, endpoint_map):
+    def enact(self, endpoint_map, ip):
         print 'REFRESH', self.service, self.endpoints
         print 'Has %d targets to balance' % len(self.endpoints)
         if not self.endpoints:
@@ -60,9 +62,14 @@ class AddEndpoint(object):
         self.service = service
         self.endpoint = endpoint
 
-    def enact(self, endpoint_map):
+    def enact(self, endpoint_map, ip):
         print 'NEW_TUNNEL', self.service, self.endpoint
-        endpoint_map[self.service][self.endpoint] = 1
+        ifname = TUNNEL_PREFIX + binascii.hexlify(
+                socket.inet_aton(self.endpoint))
+        ip.link('add', ifname=ifname, kind='gre', gre_remote=self.endpoint)
+        ip.link('set', state='up', ifname=ifname)
+        #ip.route('add', dst=self.service.tunnel_ip, oif=2, encap={'type': 'mpls', 'labels': '200/300'})
+        endpoint_map[self.service][self.endpoint] = ifname
 
 
 class RemoveEndpoint(object):
@@ -72,6 +79,8 @@ class RemoveEndpoint(object):
         self.service = service
         self.endpoint = endpoint
 
-    def enact(self, endpoint_map):
+    def enact(self, endpoint_map, ip):
         print 'REMOVE_TUNNEL', self.service, self.endpoint
+        ifname = endpoint_map[self.service][self.endpoint]
+        ip.link('delete', ifname=ifname)
         del endpoint_map[self.service][self.endpoint]

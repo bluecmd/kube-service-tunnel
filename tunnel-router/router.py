@@ -3,6 +3,7 @@
 import collections
 import iptc
 import pykube
+import pyroute2
 import random
 import time
 
@@ -15,7 +16,7 @@ TUNNEL_ANNOTATION = 'cmd.nu/tunnel'
 BUCKETS = 2
 
 
-Service = collections.namedtuple('Service', ('name', 'namespace'))
+Service = collections.namedtuple('Service', ('name', 'namespace', 'tunnel_ip'))
 
 
 def create_ingress_chain():
@@ -62,23 +63,28 @@ def register_ingress():
 
 
 def get_services(api):
-    """Return set of (service, tunnel-ip)."""
+    """Return set of services."""
     filters = set()
     for svc in pykube.Service.objects(api).filter(namespace=pykube.all):
         annotations = svc.metadata.get('annotations', {})
         tunnel_ip = annotations.get(TUNNEL_ANNOTATION, None)
         if tunnel_ip is None:
             continue
-        filters.add((Service(svc.name, svc.metadata['namespace']), tunnel_ip))
+        filters.add((Service(svc.name, svc.metadata['namespace'], tunnel_ip)))
     return filters
 
 
 def get_endpoints(api, services):
     """Return map of (service) = set(ips)."""
+
+    # Create a fast-lookup for (svc, ns) -> Service object
+    lookup_map = {(x.name, x.namespace): x for x in services}
+
     endpoints = {}
     for endp in pykube.Endpoint.objects(api).filter(namespace=pykube.all):
-        svc = Service(endp.metadata['name'], endp.metadata['namespace'])
-        if not svc in services:
+        svc = lookup_map.get(
+                (endp.metadata['name'], endp.metadata['namespace']), None)
+        if svc is None:
             continue
         ips = set()
         subsets = endp.obj['subsets']
@@ -95,10 +101,10 @@ def calculate_filter_changes(api, service_map):
     current_services = set(service_map.keys())
     removed_services = current_services - new_services
     added_services = new_services - current_services
-    for svc, tunnel_ip in added_services:
-        yield change.AddService(svc, tunnel_ip)
-    for svc, tunnel_ip in removed_services:
-        yield change.RemoveService(svc, tunnel_ip)
+    for svc in added_services:
+        yield change.AddService(svc)
+    for svc in removed_services:
+        yield change.RemoveService(svc)
 
 
 def calculate_routing_changes(api, endpoint_map, service_filter):
@@ -125,6 +131,13 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
         yield change.RefreshEndpoints(svc, set())
 
 
+def purge_old_tunnels(ip):
+    for link in ip.get_links():
+        ifname = link.get_attr('IFLA_IFNAME')
+        if ifname.startswith(change.TUNNEL_PREFIX):
+            ip.link('del', ifname=ifname)
+
+
 if __name__ == '__main__':
     print 'Creating ingress chain'
     ingress_chain = create_ingress_chain()
@@ -134,6 +147,10 @@ if __name__ == '__main__':
 
     print 'Registering ingress'
     register_ingress()
+
+    print 'Purging old tunnels'
+    ip = pyroute2.IPRoute()
+    purge_old_tunnels(ip)
 
     print 'Starting poll loop for Kubernetes services'
     kube_creds = pykube.KubeConfig.from_file('/home/bluecmd/.kube/config')
@@ -154,11 +171,10 @@ if __name__ == '__main__':
         for c in filter_changes:
             c.enact(service_map, filter_chain, ingress_chain)
 
-        service_filter = {svc for svc, _ in service_map}
         routing_changes = calculate_routing_changes(
-                api, endpoint_map, service_filter)
+                api, endpoint_map, service_map.keys())
 
         for c in routing_changes:
-            c.enact(endpoint_map)
+            c.enact(endpoint_map, ip)
 
         time.sleep(1)
