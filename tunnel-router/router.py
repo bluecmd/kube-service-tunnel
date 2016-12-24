@@ -8,6 +8,7 @@ import time
 
 import change
 
+
 INGRESS_CHAIN = 'TUNNEL-INGRESS'
 FILTER_CHAIN = 'TUNNEL-FILTER'
 TUNNEL_ANNOTATION = 'cmd.nu/tunnel'
@@ -34,6 +35,7 @@ def create_ingress_chain():
     else:
         ingress_chain = mangle_table.create_chain(INGRESS_CHAIN)
     ingress_chain.insert_rule(rule)
+    return ingress_chain
 
 
 def create_ingress_filter_chain():
@@ -44,7 +46,6 @@ def create_ingress_filter_chain():
         filter_chain.flush()
     else:
         filter_chain = mangle_table.create_chain(FILTER_CHAIN)
-
     return filter_chain
 
 
@@ -106,19 +107,27 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
 
     # Endppint changes in already known, or new, services
     for svc, new_endpoints in new_endpoints_map.iteritems():
-        current_endpoints = endpoint_map.get(svc, set())
+        current_endpoints = set(endpoint_map.get(svc, dict()).keys())
+        added_endpoints = new_endpoints - current_endpoints
+        removed_endpoints = current_endpoints - new_endpoints
+        for endpoint in added_endpoints:
+            yield change.AddEndpoint(svc, endpoint)
+        for endpoint in removed_endpoints:
+            yield change.RemoveEndpoint(svc, endpoint)
         if current_endpoints != new_endpoints:
             yield change.RefreshEndpoints(svc, new_endpoints)
 
     # Purge empty endpoint services
     removed_services = set(endpoint_map.keys()) - set(new_endpoints_map.keys())
     for svc in removed_services:
+        for endpoint in endpoint_map[svc].keys():
+            yield change.RemoveEndpoint(svc, endpoint)
         yield change.RefreshEndpoints(svc, set())
 
 
 if __name__ == '__main__':
     print 'Creating ingress chain'
-    create_ingress_chain()
+    ingress_chain = create_ingress_chain()
 
     print 'Creating ingress filter chain'
     filter_chain = create_ingress_filter_chain()
@@ -136,14 +145,14 @@ if __name__ == '__main__':
     service_map = {}
 
     # Map 2: Used to balance among endpoints (pods)
-    # Stored as (service) = set(pods)
+    # Stored as (service) = {pod: tunnel}
     # On changes on the above, recalculate the route maps
-    endpoint_map = {}
+    endpoint_map = collections.defaultdict(dict)
 
     while True:
         filter_changes = calculate_filter_changes(api, service_map)
         for c in filter_changes:
-            c.enact(service_map, filter_chain)
+            c.enact(service_map, filter_chain, ingress_chain)
 
         service_filter = {svc for svc, _ in service_map}
         routing_changes = calculate_routing_changes(
