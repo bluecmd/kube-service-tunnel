@@ -6,6 +6,7 @@ import pykube
 import random
 import time
 
+import change
 
 INGRESS_CHAIN = 'TUNNEL-INGRESS'
 FILTER_CHAIN = 'TUNNEL-FILTER'
@@ -14,12 +15,6 @@ BUCKETS = 2
 
 
 Service = collections.namedtuple('Service', ('name', 'namespace'))
-AddService = collections.namedtuple(
-        'AddService', ('service', 'tunnel_ip'))
-RemoveService = collections.namedtuple(
-        'RemoveService', ('service', 'tunnel_ip'))
-RefreshEndpoints = collections.namedtuple(
-        'RefreshEndpoints', ('service', 'endpoints'))
 
 
 def create_ingress_chain():
@@ -100,9 +95,9 @@ def calculate_filter_changes(api, service_map):
     removed_services = current_services - new_services
     added_services = new_services - current_services
     for svc, tunnel_ip in added_services:
-        yield AddService(svc, tunnel_ip)
+        yield change.AddService(svc, tunnel_ip)
     for svc, tunnel_ip in removed_services:
-        yield RemoveService(svc, tunnel_ip)
+        yield change.RemoveService(svc, tunnel_ip)
 
 
 def calculate_routing_changes(api, endpoint_map, service_filter):
@@ -113,12 +108,12 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
     for svc, new_endpoints in new_endpoints_map.iteritems():
         current_endpoints = endpoint_map.get(svc, set())
         if current_endpoints != new_endpoints:
-            yield RefreshEndpoints(svc, new_endpoints)
+            yield change.RefreshEndpoints(svc, new_endpoints)
 
     # Purge empty endpoint services
     removed_services = set(endpoint_map.keys()) - set(new_endpoints_map.keys())
     for svc in removed_services:
-        yield RefreshEndpoints(svc, set())
+        yield change.RefreshEndpoints(svc, set())
 
 
 if __name__ == '__main__':
@@ -147,25 +142,14 @@ if __name__ == '__main__':
 
     while True:
         filter_changes = calculate_filter_changes(api, service_map)
-        for change in filter_changes:
-            key = (change.service, change.tunnel_ip)
-            if type(change) == AddService:
-                service_map[key] = 1
-                print 'ADD', change.service, change.tunnel_ip
-            elif type(change) == RemoveService:
-                del service_map[key]
-                print 'REMOVE', change.service, change.tunnel_ip
+        for c in filter_changes:
+            c.enact(service_map, filter_chain)
 
         service_filter = {svc for svc, _ in service_map}
         routing_changes = calculate_routing_changes(
                 api, endpoint_map, service_filter)
 
-        for change in routing_changes:
-            if type(change) == RefreshEndpoints:
-                print 'REFRESH', change.service, change.endpoints
-                if not change.endpoints:
-                    del endpoint_map[change.service]
-                    continue
-                endpoint_map[change.service] = change.endpoints
+        for c in routing_changes:
+            c.enact(endpoint_map)
 
         time.sleep(1)
