@@ -1,10 +1,12 @@
 import binascii
 import iptc
+import pyroute2
 import socket
 
 
 # Prefix tunnel interfaces with this string
 TUNNEL_PREFIX = 'ts'
+BUCKETS = 2
 
 
 class AddService(object):
@@ -43,16 +45,35 @@ class RemoveService(object):
 class RefreshEndpoints(object):
     """Recalculate all the routing buckets for a service."""
 
-    def __init__(self, service, endpoints):
+    def __init__(self, service):
         self.service = service
-        self.endpoints = endpoints
 
     def enact(self, endpoint_map, ip):
-        print 'REFRESH', self.service, self.endpoints
-        print 'Has %d targets to balance' % len(self.endpoints)
-        if not self.endpoints:
+        print 'REFRESH', self.service
+
+        # TODO research what the state of per-route encap is. that would be
+        # extremely nice to use here instead of having a lot of GRE interfaces.
+        #ip.route('add', dst=self.service.tunnel_ip, oif=2, encap={'type': 'mpls', 'labels': '200/300'})
+
+        dst = self.service.tunnel_ip + '/32'
+
+        # TODO: only apply the actual changes we need
+        for table in range(BUCKETS):
+            try:
+                ip.route('del', table=(table+1), dst=dst)
+            except pyroute2.netlink.exceptions.NetlinkError:
+                pass
+
+        endpoints = endpoint_map[self.service]
+        if not endpoints:
             del endpoint_map[self.service]
             return
+
+        # TODO: do actual balancing
+        endpoint = endpoints.keys()[0]
+        ifx = endpoints[endpoint]
+        for table in range(BUCKETS):
+            ip.route('add', table=(table+1), dst=dst, oif=ifx)
 
 
 class AddEndpoint(object):
@@ -67,9 +88,9 @@ class AddEndpoint(object):
         ifname = TUNNEL_PREFIX + binascii.hexlify(
                 socket.inet_aton(self.endpoint))
         ip.link('add', ifname=ifname, kind='gre', gre_remote=self.endpoint)
-        ip.link('set', state='up', ifname=ifname)
-        #ip.route('add', dst=self.service.tunnel_ip, oif=2, encap={'type': 'mpls', 'labels': '200/300'})
-        endpoint_map[self.service][self.endpoint] = ifname
+        ifx = ip.link_lookup(ifname=ifname)[0]
+        ip.link('set', state='up', index=ifx)
+        endpoint_map[self.service][self.endpoint] = ifx
 
 
 class RemoveEndpoint(object):
@@ -81,6 +102,6 @@ class RemoveEndpoint(object):
 
     def enact(self, endpoint_map, ip):
         print 'REMOVE_TUNNEL', self.service, self.endpoint
-        ifname = endpoint_map[self.service][self.endpoint]
-        ip.link('delete', ifname=ifname)
+        ifx = endpoint_map[self.service][self.endpoint]
+        ip.link('delete', index=ifx)
         del endpoint_map[self.service][self.endpoint]

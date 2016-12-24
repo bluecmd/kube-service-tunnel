@@ -13,7 +13,6 @@ import change
 INGRESS_CHAIN = 'TUNNEL-INGRESS'
 FILTER_CHAIN = 'TUNNEL-FILTER'
 TUNNEL_ANNOTATION = 'cmd.nu/tunnel'
-BUCKETS = 2
 
 
 Service = collections.namedtuple('Service', ('name', 'namespace', 'tunnel_ip'))
@@ -25,7 +24,7 @@ def create_ingress_chain():
     t = rule.create_target('HMARK')
 
     t.hmark_tuple = 'src,dst,sport,dport'
-    t.hmark_mod = str(BUCKETS)
+    t.hmark_mod = str(change.BUCKETS)
     t.hmark_offset = '1'
     t.hmark_rnd = str(random.randint(1,65535))
 
@@ -121,14 +120,14 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
         for endpoint in removed_endpoints:
             yield change.RemoveEndpoint(svc, endpoint)
         if current_endpoints != new_endpoints:
-            yield change.RefreshEndpoints(svc, new_endpoints)
+            yield change.RefreshEndpoints(svc)
 
     # Purge empty endpoint services
     removed_services = set(endpoint_map.keys()) - set(new_endpoints_map.keys())
     for svc in removed_services:
         for endpoint in endpoint_map[svc].keys():
             yield change.RemoveEndpoint(svc, endpoint)
-        yield change.RefreshEndpoints(svc, set())
+        yield change.RefreshEndpoints(svc)
 
 
 def purge_old_tunnels(ip):
