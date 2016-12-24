@@ -1,0 +1,28 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: tunnel-router
+  name: tunnel-router
+  namespace: kube-system
+spec:
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        cmd.nu/tunnel-router: ""
+      labels:
+        k8s-app: tunnel-router
+    spec:
+      containers:
+        - args:
+          - sleep
+          - "10000"
+          image: ubuntu:yakkety
+          imagePullPolicy: Always
+          name: router
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+      terminationGracePeriodSeconds: 5
