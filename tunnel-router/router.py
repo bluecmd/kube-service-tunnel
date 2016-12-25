@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import collections
 import iptc
@@ -119,7 +119,7 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
     new_endpoints_map = get_endpoints(api, service_filter)
 
     # Endppint changes in already known, or new, services
-    for svc, new_endpoints in new_endpoints_map.iteritems():
+    for svc, new_endpoints in new_endpoints_map.items():
         current_endpoints = set(endpoint_map.get(svc, dict()).keys())
         added_endpoints = new_endpoints - current_endpoints
         removed_endpoints = current_endpoints - new_endpoints
@@ -157,7 +157,7 @@ def create_iproute_rules():
 
 
 def loop(ingress_chain, filter_chain):
-    print 'Starting poll loop for Kubernetes services'
+    print('Starting poll loop for Kubernetes services')
     kube_creds = None
     if 'KUBECONFIG' in os.environ:
         kube_creds = pykube.KubeConfig.from_file(os.environ['KUBECONFIG'])
@@ -190,19 +190,19 @@ def loop(ingress_chain, filter_chain):
 
 
 if __name__ == '__main__':
-    print 'Creating ingress chain'
+    print('Creating ingress chain')
     ingress_chain = create_ingress_chain()
 
-    print 'Creating ingress filter chain'
+    print('Creating ingress filter chain')
     filter_chain = create_ingress_filter_chain()
 
-    print 'Registering ingress'
+    print('Registering ingress')
     register_ingress()
 
-    print 'Purging old tunnels'
+    print('Purging old tunnels')
     purge_old_tunnels()
 
-    print 'Creating iproute rules'
+    print('Creating iproute rules')
     create_iproute_rules()
 
     while True:
@@ -211,5 +211,6 @@ if __name__ == '__main__':
         except KeyboardInterrupt:
             break
         except:
-            print 'Exception in main loop:'
+            print('Exception in main loop:')
             traceback.print_exc()
+            time.sleep(1)

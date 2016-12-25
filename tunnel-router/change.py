@@ -18,7 +18,7 @@ class AddService(object):
         self.service = service
 
     def enact(self, service_map, filter_chain, ingress_chain):
-        print 'ADD', self.service
+        print('ADD', self.service)
 
         rule = iptc.Rule()
         rule.dst = self.service.tunnel_ip
@@ -38,7 +38,7 @@ class RemoveService(object):
         self.service = service
 
     def enact(self, service_map, filter_chain, ingress_chain):
-        print 'REMOVE', self.service
+        print('REMOVE', self.service)
         rule = service_map[self.service]
         filter_chain.delete_rule(rule)
         del service_map[self.service]
@@ -51,7 +51,7 @@ class RefreshEndpoints(object):
         self.service = service
 
     def enact(self, endpoint_map, ip):
-        print 'REFRESH', self.service
+        print('REFRESH', self.service)
 
         # TODO research what the state of per-route encap is. that would be
         # extremely nice to use here instead of having a lot of GRE interfaces.
@@ -72,7 +72,7 @@ class RefreshEndpoints(object):
             return
 
         # TODO: do actual balancing
-        endpoint = endpoints.keys()[0]
+        endpoint = list(endpoints.keys())[0]
         ifx = endpoints[endpoint]
         for table in range(BUCKETS):
             if MODE == 'gre':
@@ -90,7 +90,7 @@ class AddEndpoint(object):
         self.endpoint = endpoint
 
     def enact(self, endpoint_map, ip):
-        print 'NEW_TUNNEL', self.service, self.endpoint
+        print('NEW_TUNNEL', self.service, self.endpoint)
         ifx = None
         if MODE == 'gre':
             ifname = TUNNEL_PREFIX + binascii.hexlify(
@@ -109,7 +109,7 @@ class RemoveEndpoint(object):
         self.endpoint = endpoint
 
     def enact(self, endpoint_map, ip):
-        print 'REMOVE_TUNNEL', self.service, self.endpoint
+        print('REMOVE_TUNNEL', self.service, self.endpoint)
         ifx = endpoint_map[self.service][self.endpoint]
         if ifx:
             ip.link('delete', index=ifx)
