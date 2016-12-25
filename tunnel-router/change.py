@@ -1,13 +1,14 @@
 import binascii
 import iptc
+import os
 import pyroute2
 import socket
 
 
 # Prefix tunnel interfaces with this string
-TUNNEL_PREFIX = 'ts'
-BUCKETS = 2
-MODE = 'mpls'
+TUNNEL_PREFIX = os.environ.get('TUNNEL_ROUTER_TUNNEL_PREFIX', 'ts')
+BUCKETS = int(os.environ.get('TUNNEL_ROUTER_BUCKETS', '2'))
+MODE = os.environ.get('TUNNEL_ROUTER_MODE', 'mpls')
 
 
 class AddService(object):

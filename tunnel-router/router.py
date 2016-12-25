@@ -2,18 +2,24 @@
 
 import collections
 import iptc
-import pykube
 import os
+import pykube
 import pyroute2
 import random
 import time
+import traceback
 
 import change
 
 
-INGRESS_CHAIN = 'TUNNEL-INGRESS'
-FILTER_CHAIN = 'TUNNEL-FILTER'
-TUNNEL_ANNOTATION = 'cmd.nu/tunnel'
+INGRESS_CHAIN = os.environ.get(
+        'TUNNEL_ROUTER_INGRESS_CHAIN', 'TUNNEL-INGRESS')
+FILTER_CHAIN = os.environ.get(
+        'TUNNEL_ROUTER_FILTER_CHAIN', 'TUNNEL-FILTER')
+TUNNEL_ANNOTATION = os.environ.get(
+        'TUNNEL_ROUTER_TUNNEL_ANNOTATION', 'cmd.nu/tunnel')
+TABLE_OFFSET = os.environ.get(
+        'TUNNEL_ROUTER_TABLE_OFFSET', '1')
 
 
 Service = collections.namedtuple('Service', ('name', 'namespace', 'tunnel_ip'))
@@ -26,8 +32,8 @@ def create_ingress_chain():
 
     t.hmark_tuple = 'src,dst,sport,dport'
     t.hmark_mod = str(change.BUCKETS)
-    t.hmark_offset = '1'
-    t.hmark_rnd = str(random.randint(1,65535))
+    t.hmark_offset = TABLE_OFFSET
+    t.hmark_rnd = str(random.randint(1, 65535))
 
     mangle_table = iptc.Table(iptc.Table.MANGLE)
     ingress_chain = iptc.Chain(mangle_table, INGRESS_CHAIN)
@@ -132,28 +138,16 @@ def calculate_routing_changes(api, endpoint_map, service_filter):
         yield change.RefreshEndpoints(svc)
 
 
-def purge_old_tunnels(ip):
+def purge_old_tunnels():
+    ip = pyroute2.IPRoute()
     for link in ip.get_links():
         ifname = link.get_attr('IFLA_IFNAME')
         if ifname.startswith(change.TUNNEL_PREFIX):
             ip.link('del', ifname=ifname)
 
 
-if __name__ == '__main__':
-    print 'Creating ingress chain'
-    ingress_chain = create_ingress_chain()
-
-    print 'Creating ingress filter chain'
-    filter_chain = create_ingress_filter_chain()
-
-    print 'Registering ingress'
-    register_ingress()
-
-    print 'Purging old tunnels'
+def create_iproute_rules():
     ip = pyroute2.IPRoute()
-    purge_old_tunnels(ip)
-
-    print 'Creating iproute rules'
     for i in range(change.BUCKETS):
         try:
             ip.rule('add', table=(i+1), fwmark=(i+1))
@@ -161,6 +155,8 @@ if __name__ == '__main__':
             # Assume it already exists
             pass
 
+
+def loop(ingress_chain, filter_chain):
     print 'Starting poll loop for Kubernetes services'
     kube_creds = None
     if 'KUBECONFIG' in os.environ:
@@ -178,6 +174,7 @@ if __name__ == '__main__':
     # On changes on the above, recalculate the route maps
     endpoint_map = collections.defaultdict(dict)
 
+    ip = pyroute2.IPRoute()
     while True:
         filter_changes = calculate_filter_changes(api, service_map)
         for c in filter_changes:
@@ -190,3 +187,29 @@ if __name__ == '__main__':
             c.enact(endpoint_map, ip)
 
         time.sleep(1)
+
+
+if __name__ == '__main__':
+    print 'Creating ingress chain'
+    ingress_chain = create_ingress_chain()
+
+    print 'Creating ingress filter chain'
+    filter_chain = create_ingress_filter_chain()
+
+    print 'Registering ingress'
+    register_ingress()
+
+    print 'Purging old tunnels'
+    purge_old_tunnels()
+
+    print 'Creating iproute rules'
+    create_iproute_rules()
+
+    while True:
+        try:
+            loop(ingress_chain, filter_chain)
+        except KeyboardInterrupt:
+            break
+        except:
+            print 'Exception in main loop:'
+            traceback.print_exc()
