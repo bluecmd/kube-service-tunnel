@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    # This is the IP that will be tunneled into the pod.
+    # The pod will also get this IP added to a pod-local interface.
+    cmd.nu/tunnel: 31.31.164.211
+  labels:
+    k8s-app: test
+  name: test
+spec:
+  ports:
+  - port: 3000
+    protocol: TCP
+    targetPort: 3000
+  selector:
+    k8s-app: flood
