@@ -14,4 +14,4 @@ spec:
     protocol: TCP
     targetPort: 3000
   selector:
-    k8s-app: flood
+    k8s-app: test
