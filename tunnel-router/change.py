@@ -93,8 +93,8 @@ class AddEndpoint(object):
         print('NEW_TUNNEL', self.service, self.endpoint)
         ifx = None
         if MODE == 'gre':
-            ifname = TUNNEL_PREFIX + binascii.hexlify(
-                    socket.inet_aton(self.endpoint))
+            ifname = TUNNEL_PREFIX + str(binascii.hexlify(
+                    socket.inet_aton(self.endpoint)), 'utf-8')
             ip.link('add', ifname=ifname, kind='gre', gre_remote=self.endpoint)
             ifx = ip.link_lookup(ifname=ifname)[0]
             ip.link('set', state='up', index=ifx)
