@@ -12,8 +12,13 @@ spec:
         k8s-app: tunnel-router
     spec:
       hostNetwork: true
+      # Needed to inject network interfaces into pods
+      hostPID: true
       containers:
         - image: bluecmd/tunnel-router
+          env:
+            - name: TUNNEL_ROUTER_MODE
+              value: 'gre'
           imagePullPolicy: Always
           name: router
           securityContext:

@@ -23,6 +23,7 @@ TABLE_OFFSET = os.environ.get(
 
 
 Service = collections.namedtuple('Service', ('name', 'namespace', 'tunnel_ip'))
+Endpoint = collections.namedtuple('Endpoint', ('ip', 'networkNs'))
 
 
 def create_ingress_chain():
@@ -63,7 +64,7 @@ def register_ingress():
         for rule in chain.rules:
             if rule.target.name == FILTER_CHAIN:
                 # Already registered
-                return
+                continue
         rule = iptc.Rule()
         t = rule.create_target(FILTER_CHAIN)
         chain.insert_rule(rule)
@@ -97,6 +98,7 @@ def get_endpoints(api, services):
         subsets = endp.obj['subsets']
         for s in subsets:
             for address in s['addresses']:
+                # TODO: XXX resolve containerId -> proc-ns-path
                 ips.add(address['ip'])
         endpoints[svc] = ips
     return endpoints
