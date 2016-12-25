@@ -156,7 +156,7 @@ def create_iproute_rules():
             pass
 
 
-def loop(ingress_chain, filter_chain):
+def loop(ingress_chain, filter_chain, service_map, endpoint_map):
     print('Starting poll loop for Kubernetes services')
     kube_creds = None
     if 'KUBECONFIG' in os.environ:
@@ -164,15 +164,6 @@ def loop(ingress_chain, filter_chain):
     else:
         kube_creds = pykube.KubeConfig.from_service_account()
     api = pykube.HTTPClient(kube_creds)
-
-    # Map 1: Used to filter on IPs to ingress in the tunnels
-    # Stored as (service, tunnel-ip) = iptc.Rule
-    service_map = {}
-
-    # Map 2: Used to balance among endpoints (pods)
-    # Stored as (service) = {pod: tunnel}
-    # On changes on the above, recalculate the route maps
-    endpoint_map = collections.defaultdict(dict)
 
     ip = pyroute2.IPRoute()
     while True:
@@ -205,9 +196,18 @@ if __name__ == '__main__':
     print('Creating iproute rules')
     create_iproute_rules()
 
+    # Map 1: Used to filter on IPs to ingress in the tunnels
+    # Stored as (service, tunnel-ip) = iptc.Rule
+    service_map = {}
+
+    # Map 2: Used to balance among endpoints (pods)
+    # Stored as (service) = {pod: tunnel}
+    # On changes on the above, recalculate the route maps
+    endpoint_map = collections.defaultdict(dict)
+
     while True:
         try:
-            loop(ingress_chain, filter_chain)
+            loop(ingress_chain, filter_chain, service_map, endpoint_map)
         except KeyboardInterrupt:
             break
         except:
