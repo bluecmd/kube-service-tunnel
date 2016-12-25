@@ -35,6 +35,20 @@ Due to the restrictions above the following applies:
 **If anybody knows more about lwtunnels and how to use it to encapsulate inside
 an IP packet, please let me know.**
 
+### Load Balancing
+
+`TODO: Explain this in more detail`
+
+Using iptables' `HMARK` target, an incoming packet receives a hash that is used to select among a configurable number of routing tables. Each routing table contains a route for every active tunnel IP. One endpoint will most likely be in multiple buckets, and if you have more endpoints than buckets you will have no traffic to the excess part of your endpoints.
+
+### Configuration of Endpoints
+
+When a new endpoint is discovered that belongs to a service with a tunnel IP, that endpoint's pod must be reconfigured to have the tunnel IP available. This is done in a container runtime dependent way (due to network namespace ID lookup), and currently only Docker is supported.
+
+If the mode of operation is GRE: A GRE interface is created inside the network namespace and the tunnel IP is attached to it.
+
+If the mode of operation is MPLS: An MPLS decapsulation rule is added to pop the label `100` and deliver those packages locally. The tunnel IP is added to the looback inteface.
+
 ## Example Service
 
 ```
