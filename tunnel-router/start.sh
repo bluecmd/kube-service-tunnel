@@ -7,4 +7,4 @@ do
 done
 
 cd /router/
-exec env XTABLES_LIBDIR=/usr/lib/xtables/ ./router.py
+exec env XTABLES_LIBDIR=/usr/lib/xtables/ python3 -u ./router.py
