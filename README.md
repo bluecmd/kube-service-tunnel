@@ -4,6 +4,13 @@ Goal: Have externally routable IPs end up as normal IP packets inside pods.
 
 Implementation: Using tunnels on ingressing traffic torward these IPs, tunnel the traffic to inside the pods.
 
+## Getting Started
+
+1. `kubectl create -f tunnel-router.yaml`
+2. Annotate a service with `cmd.nu/tunnel: $ip` where $ip is an IP that is routed towards your nodes.
+
+Done! You should now be able to access the pod normally through the tunnel'd IP. If your pod listens to `0.0.0.0`/`::0` everything should just work.
+
 ## Modes of Operation
 
 kube-service-tunnel preferred mode uses lwtunnels to avoid creating a massive
@@ -27,3 +34,25 @@ Due to the restrictions above the following applies:
 
 **If anybody knows more about lwtunnels and how to use it to encapsulate inside
 an IP packet, please let me know.**
+
+## Example Service
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    # This is the IP that will be tunneled into the pod.
+    # The pod will also get this IP added to a pod-local interface.
+    cmd.nu/tunnel: 1.2.3.4
+  labels:
+    k8s-app: test
+  name: test
+spec:
+  ports:
+  - port: 3000
+    protocol: TCP
+    targetPort: 3000
+  selector:
+    k8s-app: test
+```
