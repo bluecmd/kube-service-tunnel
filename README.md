@@ -23,7 +23,7 @@ tunnel interfaces.
 Currently, as far as I know, the only supported encapsulation for lwtunnels
 is MPLS, which limits the usability of this mode to node-local encapsulation.
 If you have other router infrastructure set up to deliver traffic to your nodes
-(like (`svc-bgp`)[https://github.com/dhtech/kubernetes/tree/master/svc-bgp])
+(like [`svc-bgp`](https://github.com/dhtech/kubernetes/tree/master/svc-bgp))
 this will work just fine. Otherwise you might want to use the GRE mode.
 
 Due to the restrictions above the following applies:
