@@ -3,6 +3,7 @@
 import collections
 import iptc
 import pykube
+import os
 import pyroute2
 import random
 import time
@@ -50,15 +51,16 @@ def create_ingress_filter_chain():
 
 
 def register_ingress():
-    """Insert PREROUTING rule for packets to move through the ingress filter."""
-    chain = iptc.Chain(iptc.Table(iptc.Table.MANGLE), 'PREROUTING')
-    for rule in chain.rules:
-        if rule.target.name == FILTER_CHAIN:
-            # Already registered
-            return
-    rule = iptc.Rule()
-    t = rule.create_target(FILTER_CHAIN)
-    chain.insert_rule(rule)
+    """Insert rules for packets to move through the ingress filter."""
+    for c in ['PREROUTING', 'OUTPUT']:
+        chain = iptc.Chain(iptc.Table(iptc.Table.MANGLE), c)
+        for rule in chain.rules:
+            if rule.target.name == FILTER_CHAIN:
+                # Already registered
+                return
+        rule = iptc.Rule()
+        t = rule.create_target(FILTER_CHAIN)
+        chain.insert_rule(rule)
 
 
 def get_services(api):
@@ -151,9 +153,20 @@ if __name__ == '__main__':
     ip = pyroute2.IPRoute()
     purge_old_tunnels(ip)
 
+    print 'Creating iproute rules'
+    for i in range(change.BUCKETS):
+        try:
+            ip.rule('add', table=(i+1), fwmark=(i+1))
+        except pyroute2.netlink.exceptions.NetlinkError:
+            # Assume it already exists
+            pass
+
     print 'Starting poll loop for Kubernetes services'
-    #kube_creds = pykube.KubeConfig.from_file('/home/bluecmd/.kube/config')
-    kube_creds = pykube.KubeConfig.from_service_account()
+    kube_creds = None
+    if 'KUBECONFIG' in os.environ:
+        kube_creds = pykube.KubeConfig.from_file(os.environ['KUBECONFIG'])
+    else:
+        kube_creds = pykube.KubeConfig.from_service_account()
     api = pykube.HTTPClient(kube_creds)
 
     # Map 1: Used to filter on IPs to ingress in the tunnels

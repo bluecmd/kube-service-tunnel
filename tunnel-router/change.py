@@ -7,6 +7,7 @@ import socket
 # Prefix tunnel interfaces with this string
 TUNNEL_PREFIX = 'ts'
 BUCKETS = 2
+MODE = 'mpls'
 
 
 class AddService(object):
@@ -73,7 +74,11 @@ class RefreshEndpoints(object):
         endpoint = endpoints.keys()[0]
         ifx = endpoints[endpoint]
         for table in range(BUCKETS):
-            ip.route('add', table=(table+1), dst=dst, oif=ifx)
+            if MODE == 'gre':
+                ip.route('add', table=(table+1), dst=dst, oif=ifx)
+            if MODE == 'mpls':
+                ip.route('add', table=(table+1), dst=dst, gateway=endpoint,
+                        encap={'type': 'mpls', 'labels': 100})
 
 
 class AddEndpoint(object):
@@ -85,11 +90,13 @@ class AddEndpoint(object):
 
     def enact(self, endpoint_map, ip):
         print 'NEW_TUNNEL', self.service, self.endpoint
-        ifname = TUNNEL_PREFIX + binascii.hexlify(
-                socket.inet_aton(self.endpoint))
-        ip.link('add', ifname=ifname, kind='gre', gre_remote=self.endpoint)
-        ifx = ip.link_lookup(ifname=ifname)[0]
-        ip.link('set', state='up', index=ifx)
+        ifx = None
+        if MODE == 'gre':
+            ifname = TUNNEL_PREFIX + binascii.hexlify(
+                    socket.inet_aton(self.endpoint))
+            ip.link('add', ifname=ifname, kind='gre', gre_remote=self.endpoint)
+            ifx = ip.link_lookup(ifname=ifname)[0]
+            ip.link('set', state='up', index=ifx)
         endpoint_map[self.service][self.endpoint] = ifx
 
 
@@ -103,5 +110,6 @@ class RemoveEndpoint(object):
     def enact(self, endpoint_map, ip):
         print 'REMOVE_TUNNEL', self.service, self.endpoint
         ifx = endpoint_map[self.service][self.endpoint]
-        ip.link('delete', index=ifx)
+        if ifx:
+            ip.link('delete', index=ifx)
         del endpoint_map[self.service][self.endpoint]
