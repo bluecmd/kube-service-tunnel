@@ -6,4 +6,5 @@ do
   echo 0 > $i
 done
 
-/router.py
+cd /router/
+exec env XTABLES_LIBDIR=/usr/lib/xtables/ ./router.py

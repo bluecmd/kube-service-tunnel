@@ -8,17 +8,12 @@ metadata:
 spec:
   template:
     metadata:
-      annotations:
-        cmd.nu/tunnel-router: ""
       labels:
         k8s-app: tunnel-router
     spec:
       hostNetwork: true
       containers:
-        - args:
-          - sleep
-          - "10000"
-          image: ubuntu:yakkety
+        - image: bluecmd/tunnel-router
           imagePullPolicy: Always
           name: router
           securityContext:

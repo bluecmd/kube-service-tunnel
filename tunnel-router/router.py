@@ -152,8 +152,8 @@ if __name__ == '__main__':
     purge_old_tunnels(ip)
 
     print 'Starting poll loop for Kubernetes services'
-    kube_creds = pykube.KubeConfig.from_file('/home/bluecmd/.kube/config')
-    #kube_creds = pykube.KubeConfig.from_service_account()
+    #kube_creds = pykube.KubeConfig.from_file('/home/bluecmd/.kube/config')
+    kube_creds = pykube.KubeConfig.from_service_account()
     api = pykube.HTTPClient(kube_creds)
 
     # Map 1: Used to filter on IPs to ingress in the tunnels
