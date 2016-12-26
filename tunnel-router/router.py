@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import collections
+import docker
 import iptc
 import os
 import pykube
@@ -64,10 +65,11 @@ def register_ingress():
         for rule in chain.rules:
             if rule.target.name == FILTER_CHAIN:
                 # Already registered
-                continue
-        rule = iptc.Rule()
-        t = rule.create_target(FILTER_CHAIN)
-        chain.insert_rule(rule)
+                break
+        else:
+            rule = iptc.Rule()
+            t = rule.create_target(FILTER_CHAIN)
+            chain.insert_rule(rule)
 
 
 def get_services(api):
@@ -82,11 +84,35 @@ def get_services(api):
     return filters
 
 
+def docker_container_to_netns(container_id):
+    try:
+        docker_id = container_id[len('docker://'):]
+        client = docker.from_env()
+        container = client.containers.get(docker_id)
+        pid = container.attrs['State']['Pid']
+        return '/proc/%d/ns/net' % pid
+    except docker.errors.NotFound:
+        # Container is not local
+        return None
+
+
+def container_to_netns(container_id):
+    if container_id.startswith('docker://'):
+        return docker_container_to_netns(container_id)
+    else:
+        print('Unknown container family:', container_id)
+        return None
+
+
 def get_endpoints(api, services):
-    """Return map of (service) = set(ips)."""
+    """Return map of (service) = set(Endpoint)."""
 
     # Create a fast-lookup for (svc, ns) -> Service object
     lookup_map = {(x.name, x.namespace): x for x in services}
+
+    pods = {}
+    for pod in pykube.Pod.objects(api).filter(namespace=pykube.all):
+        pods[pod.metadata['uid']] = pod
 
     endpoints = {}
     for endp in pykube.Endpoint.objects(api).filter(namespace=pykube.all):
@@ -98,8 +124,11 @@ def get_endpoints(api, services):
         subsets = endp.obj['subsets']
         for s in subsets:
             for address in s['addresses']:
-                # TODO: XXX resolve containerId -> proc-ns-path
-                ips.add(address['ip'])
+                pod_uid = address['targetRef']['uid']
+                pod = pods[pod_uid]
+                container_status = pod.obj['status']['containerStatuses'][0]
+                netns = container_to_netns(container_status['containerID'])
+                ips.add(Endpoint(address['ip'], netns))
         endpoints[svc] = ips
     return endpoints
 

@@ -1,5 +1,6 @@
 import binascii
 import collections
+import errno
 import iptc
 import os
 import pyroute2
@@ -76,10 +77,10 @@ class RefreshEndpoints(object):
 
         # TODO: do actual balancing
         endpoint = list(endpoints.keys())[0]
-        ifx = endpoints[endpoint]
+        iface = endpoints[endpoint][0]
         for table in range(BUCKETS):
             if MODE == 'gre':
-                ip.route('add', table=(table+1), dst=dst, oif=ifx)
+                ip.route('add', table=(table+1), dst=dst, oif=iface.ifx)
             if MODE == 'mpls':
                 ip.route('add', table=(table+1), dst=dst, gateway=endpoint,
                         encap={'type': 'mpls', 'labels': 100})
@@ -99,29 +100,42 @@ class AddEndpoint(object):
         # Open network namespace inside the endpoint if we have it.
         # If the pod is not local, we do not have it - but another tunnel
         # router will.
-        netns = (os.open(self.endpoint.networkNs, os.R_RDONLY)
+        netns = (pyroute2.NetNS(self.endpoint.networkNs)
                 if self.endpoint.networkNs else None)
 
         if MODE == 'gre':
             ifname = TUNNEL_PREFIX + str(binascii.hexlify(
                     socket.inet_aton(self.endpoint.ip)), 'utf-8')
-            ip.link('add', ifname=ifname, kind='gre',
-                    gre_remote=self.endpoint.ip)
+            try:
+                ip.link('add', ifname=ifname, kind='gre',
+                        gre_remote=self.endpoint.ip)
+            except pyroute2.netlink.exceptions.NetlinkError as e:
+                if e.code != errno.EEXIST:
+                    raise
             ifx = ip.link_lookup(ifname=ifname)[0]
             ifs.append(Interface(ifx, internal=False))
             ip.link('set', state='up', index=ifx)
 
             if netns:
+                print('NEW_POD_TUNNEL', self.service, self.endpoint)
                 ifname = self.service.name
-                ip.link('add', ifname=ifname, kind='gre',
-                        gre_local=self.endpoint.ip, net_ns_fd=netns)
-                ifx = ip.link_lookup(ifname=ifname)[0]
+                try:
+                    netns.link('add', ifname=ifname, kind='gre',
+                            gre_local=self.endpoint.ip)
+                except pyroute2.netlink.exceptions.NetlinkError as e:
+                    if e.code != errno.EEXIST:
+                        raise
+                ifx = netns.link_lookup(ifname=ifname)[0]
                 ifs.append(Interface(ifx, internal=True))
-                ip.link('set', state='up', index=ifx)
-                ip.addr('add', address=self.service.tunnel_ip + '/32',
-                        index=ifx, net_ns_fd=nets)
+                try:
+                    netns.addr('add', address=self.service.tunnel_ip,
+                            prefixlen=32, index=ifx)
+                except pyroute2.netlink.exceptions.NetlinkError as e:
+                    if e.code != errno.EEXIST:
+                        raise
+                netns.link('set', state='up', index=ifx)
         if netns:
-            os.close(netns)
+            netns.close()
         endpoint_map[self.service][self.endpoint] = ifs
 
 
@@ -138,15 +152,22 @@ class RemoveEndpoint(object):
         # Open network namespace inside the endpoint if we have it.
         # If the pod is not local, we do not have it - but another tunnel
         # router will.
-        netns = (os.open(self.endpoint.networkNs, os.R_RDONLY)
+        netns = None
+        try:
+            netns = (pyroute2.NetNS(self.endpoint.networkNs)
                 if self.endpoint.networkNs else None)
+        except FileNotFoundError:
+            # If the namespace has gone away the interface is also gone
+            pass
 
-        for ifx in endpoint_map[self.service][self.endpoint]:
-            if ifx.internal:
-                ip.link('delete', index=ifx, net_ns_fd=netns)
+        for iface in endpoint_map[self.service][self.endpoint]:
+            if iface.internal and netns:
+                print('REMOVE_POD_IFACE', self.service, self.endpoint, iface)
+                netns.link('delete', index=iface.ifx)
             else:
-                ip.link('delete', index=ifx)
+                print('REMOVE_HOST_IFACE', self.service, self.endpoint, iface)
+                ip.link('delete', index=iface.ifx)
 
         if netns:
-            os.close(netns)
+            netns.close()
         del endpoint_map[self.service][self.endpoint]

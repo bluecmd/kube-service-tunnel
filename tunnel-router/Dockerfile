@@ -1,7 +1,7 @@
 FROM python:3-alpine
 
 RUN apk --update add gcc linux-headers musl-dev iptables
-RUN pip3 install python-iptables pyroute2 pykube
+RUN pip3 install python-iptables pyroute2 pykube docker
 
 ADD start.sh /
 ADD *.py /router/
