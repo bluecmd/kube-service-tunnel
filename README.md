@@ -4,6 +4,10 @@ Goal: Have externally routable IPs end up as normal IP packets inside pods.
 
 Implementation: Using tunnels on ingressing traffic torward these IPs, tunnel the traffic to inside the pods.
 
+State:
+- GRE verified working w/ Calico (caveat https://github.com/projectcalico/felix/issues/1248)
+- MPLS does not configure pods yet (pending https://github.com/coreos/bugs/issues/1730).
+
 ## Getting Started
 
 1. `kubectl create -f tunnel-router.yaml`
