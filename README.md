@@ -53,6 +53,16 @@ If the mode of operation is GRE: A GRE interface is created inside the network n
 
 If the mode of operation is MPLS: An MPLS decapsulation rule is added to pop the label `100` and deliver those packages locally. The tunnel IP is added to the looback inteface.
 
+### Example Cluster Layout
+
+![Example Cluster Layout](https://storage.googleapis.com/bluecmd/kube-service-tunnel/cluster-layout.svg)
+
+An example cluster would have a sane number of nodes marked to handle ingress traffic, here shown with a `node=tunnel` label. Those nodes would announce themselves to the DC routers in a suitable manner, for exmaple using BGP + BFD.
+
+The cluser ingress nodes would then be responsible for handling routing of incoming packets towards a suitable endpoint. The routing should be done such a way that when a tunnel node fails, the next tunnel node should pick the same routing path as the failed node.
+
+Note: In the current version the `HMARK` seed is random, which voids the previous paragraph. It is on the road map to store routing decisions in the service objects themselves to allow for hitless resumption of routing.
+
 ## Example Service
 
 ```
@@ -74,3 +84,47 @@ spec:
   selector:
     k8s-app: test
 ```
+
+## Roadmap
+
+Features planned:
+
+ - Tests :-)
+ - Full MPLS support
+ - Draining of endpoints
+ - Hit-less failover
+ 
+Ideas that may come to the roadmap if anyone needs them:
+
+ - Network policy support
+ - Accounting
+
+## FAQ
+
+Frequently asked questions and answers.
+
+### Why not use ...
+
+There are many ways one could solve the problem discussed here. Let's address why those solutions didn't work for me.
+
+#### NodePort
+
+For a while this is what I used. However, it is bulky when used in production. It lacks isolation between services - i.e. a service cannot use the same port, and most obviously it doesn't support the well-known ports. Having the end user having to type `https://cmd.nu:30000` would not be a good end user story.
+
+Lastly, it doesn't scale. You will run out of ports soon enough.
+
+#### LoadBalancer
+
+Same issue as above, but now requires an unknown external agent to forward the TCP connections to the assigned NodePort. Due to this forwarding you will lose the original TCP connection and the metadata about it - such as source-IP.
+
+#### ClusterIP
+
+Having the Cluster IP routable from the Internet is something we tried during Dreamhack Winter 2016. It worked reasonably well, and is the closest match to what I would consider production ready yet. Sadly, there are [assumptions](https://github.com/kubernetes/kubernetes/issues/7433) around how cluster IPs work and they are not easy to work around. 
+
+You would also find yourself wasting a lot of routable IPv4 addresses for things that are only cluster internal.
+
+#### Directly Routed IPs
+
+Basically, remove the tunnel interfaces and just route the traffic via normal routing.
+
+This would theoretically work, but a lot of fancy operations that you would like to have - like client affinity, draining, and such would be borderline impossible to implement. The normal multipath routing support in Linux is quite wild-west.
